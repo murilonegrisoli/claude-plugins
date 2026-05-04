@@ -103,32 +103,33 @@ def project_slug(cwd: Path) -> str:
     return cwd.name
 
 
-def watched_max_mtime(cwd: Path) -> float:
-    """Latest mtime across the project MEMORY.md and all global memory `.md` files.
+def _max_mtime_in_tree(root: Path, current: float) -> float:
+    """Return max(current, max mtime of any `.md` under root)."""
+    try:
+        if not root.is_dir():
+            return current
+        for md in root.rglob("*.md"):
+            try:
+                current = max(current, md.stat().st_mtime)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return current
 
-    Used to detect mid-session memory writes so we re-inject fresh content
-    instead of serving stale state from earlier in the session.
+
+def watched_max_mtime(cwd: Path) -> float:
+    """Latest mtime across all watched memory files.
+
+    Watches the entire project memory tree (`~/.claude/project-memory/{slug}/**/*.md`)
+    and the entire global memory tree (`~/.claude/memory/**/*.md`). The hook
+    only injects MEMORY.md (the index), but bumping mtime on any topic file
+    typically coincides with a skill-driven index update — watching the whole
+    tree just provides safety against missed index bumps.
     """
     max_mtime = 0.0
-
-    project_path = PROJECT_MEMORY_ROOT / project_slug(cwd) / "MEMORY.md"
-    try:
-        if project_path.is_file():
-            max_mtime = max(max_mtime, project_path.stat().st_mtime)
-    except OSError:
-        pass
-
-    memory_root = CLAUDE_HOME / "memory"
-    try:
-        if memory_root.is_dir():
-            for md in memory_root.rglob("*.md"):
-                try:
-                    max_mtime = max(max_mtime, md.stat().st_mtime)
-                except OSError:
-                    continue
-    except OSError:
-        pass
-
+    max_mtime = _max_mtime_in_tree(PROJECT_MEMORY_ROOT / project_slug(cwd), max_mtime)
+    max_mtime = _max_mtime_in_tree(CLAUDE_HOME / "memory", max_mtime)
     return max_mtime
 
 

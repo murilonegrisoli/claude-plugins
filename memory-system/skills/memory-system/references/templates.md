@@ -81,9 +81,11 @@ Add new sub-topic files as the knowledge accumulates.
 
 ---
 
-## Project memory — `~/.claude/project-memory/{slug}/MEMORY.md`
+## Project memory — single-file mode
 
 The slug is the basename of the project's working directory. The `memory-system` plugin's PreToolUse hook resolves this path automatically and lazy-creates the directory + file when the first project memory write happens.
+
+`~/.claude/project-memory/{slug}/MEMORY.md`:
 
 ```markdown
 # {Project Name} — Project Memory
@@ -96,6 +98,54 @@ Each topic is a `## H2` section with prose explanation, optional code, and struc
 
 (Populated as work in this project produces non-obvious knowledge)
 ```
+
+When this file crosses ~150 lines or accumulates 3+ distinct topics, `reorganize-memory` graduates it to **index mode** — see below.
+
+---
+
+## Project memory — index mode
+
+After graduation, `MEMORY.md` becomes the index plus a brief quick-context intro. Topic files live alongside it.
+
+`~/.claude/project-memory/{slug}/MEMORY.md` (index):
+
+```markdown
+# {Project Name} — Project Memory
+
+| File | Description | Last updated |
+|------|-------------|--------------|
+| `architecture.md` | Tech stack, layout, key decisions | YYYY-MM-DD |
+| `gotchas.md` | Project-specific footguns | YYYY-MM-DD |
+
+## Quick context
+
+(One short paragraph: repo URL, current state, what makes this project distinct. Keep it under ~10 lines — anything longer belongs in a topic file.)
+
+## Update rule
+
+Whenever a project memory file is created, modified, or removed:
+- Add, update, or remove the corresponding row above
+- Update the `Last updated` column on edits
+```
+
+---
+
+## Project topic file — `~/.claude/project-memory/{slug}/{topic}.md`
+
+```markdown
+# {Project Name} — {topic}
+
+{One-line scope description.}
+
+Each topic is a `## H2` section with prose explanation, optional code blocks, and structured tags (`**Symptom:**`, `**Fix:**`, `**Why:**`, `**Apply:**`). Italic date line `*YYYY-MM-DD*` directly under each heading.
+
+## Example Topic
+*YYYY-MM-DD*
+
+(Populated as knowledge accumulates)
+```
+
+When this file crosses ~150 lines or accumulates 3+ distinct sub-topics, split into a subfolder under `{topic}/` (same rule as global tool files).
 
 ---
 
