@@ -8,11 +8,16 @@ at session-relevant boundaries:
   2. Any tool call that immediately follows an `Agent` tool call (covers
      subagent sessions, which inherit the parent's session_id and so can't be
      distinguished by id alone — we use the `Agent` boundary as a proxy).
+  3. Any tool call where a watched memory file's mtime is newer than the
+     session's last inject — covers the case where memory was written mid-
+     session (by this session, a concurrent session, or the user) and would
+     otherwise stay stale until the next session.
 
-Subsequent tool calls in the same flow stay silent so the systemMessage isn't
-re-emitted on every Read/Bash/Edit.
+Subsequent tool calls in the same flow stay silent so the additionalContext
+isn't re-emitted on every Read/Bash/Edit.
 
-Output: JSON with `systemMessage` field on stdout. Always exits 0.
+Output: JSON with `hookSpecificOutput.additionalContext` on stdout. Always
+exits 0.
 """
 from __future__ import annotations
 
@@ -98,6 +103,35 @@ def project_slug(cwd: Path) -> str:
     return cwd.name
 
 
+def watched_max_mtime(cwd: Path) -> float:
+    """Latest mtime across the project MEMORY.md and all global memory `.md` files.
+
+    Used to detect mid-session memory writes so we re-inject fresh content
+    instead of serving stale state from earlier in the session.
+    """
+    max_mtime = 0.0
+
+    project_path = PROJECT_MEMORY_ROOT / project_slug(cwd) / "MEMORY.md"
+    try:
+        if project_path.is_file():
+            max_mtime = max(max_mtime, project_path.stat().st_mtime)
+    except OSError:
+        pass
+
+    memory_root = CLAUDE_HOME / "memory"
+    try:
+        if memory_root.is_dir():
+            for md in memory_root.rglob("*.md"):
+                try:
+                    max_mtime = max(max_mtime, md.stat().st_mtime)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+
+    return max_mtime
+
+
 def read_text_safe(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
@@ -169,9 +203,15 @@ def main() -> None:
         # Agent, so this is plausibly the subagent's first tool call. Re-inject
         # to make memory visible inside the subagent context.
         should_inject = True
+    elif watched_max_mtime(cwd) > info.get("last_inject_epoch", 0):
+        # Watched memory file changed since our last inject — re-inject so the
+        # session sees the fresh content.
+        should_inject = True
 
     info["last_was_agent"] = (tool_name == "Agent")
     info["last_seen_epoch"] = now_epoch
+    if should_inject:
+        info["last_inject_epoch"] = now_epoch
     sessions[session_id] = info
     state = prune_old_sessions(state)
     save_state(state)

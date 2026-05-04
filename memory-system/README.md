@@ -49,6 +49,8 @@ On the first tool call of every session (including subagents):
 
 Subsequent tool calls in the same session stay silent — state is tracked at `~/.claude/cache/memory-system/state.json`. Sessions older than 7 days are pruned automatically.
 
+The hook also re-injects mid-session if any watched memory file (project `MEMORY.md` or anything under `~/.claude/memory/**/*.md`) has been modified since the last injection. This covers concurrent sessions writing to memory, the user editing a memory file by hand, and Claude itself writing memory mid-flow — the next tool call sees the fresh content rather than the stale snapshot from session start.
+
 ## How memory gets written
 
 v0.1 ships **read-side automation** (the PreToolUse hook above). Writes are still claude-driven via the `memory-system` skill, which triggers when:
