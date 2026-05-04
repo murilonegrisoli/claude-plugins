@@ -1,0 +1,17 @@
+{
+  "description": "memory-system hooks: inject project + global memory once per session via PreToolUse with session-based dedup, plus subagent-boundary re-injection",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/inject-memory.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

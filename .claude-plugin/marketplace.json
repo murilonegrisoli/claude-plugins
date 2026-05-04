@@ -1,0 +1,20 @@
+{
+  "name": "negrisoli",
+  "description": "Plugins by Murilo Negrisoli",
+  "owner": {
+    "name": "Murilo Negrisoli",
+    "email": "murilo@negrisoli.net"
+  },
+  "plugins": [
+    {
+      "name": "memory-system",
+      "description": "Structured cross-project memory layer for Claude Code. Auto-injects project + global memory into every session (including subagents), with lazy init, plan-mode reorganization, and lifecycle promotion of mature memory into plugins.",
+      "author": {
+        "name": "Murilo Negrisoli",
+        "email": "murilo@negrisoli.net"
+      },
+      "category": "productivity",
+      "source": "./memory-system"
+    }
+  ]
+}
