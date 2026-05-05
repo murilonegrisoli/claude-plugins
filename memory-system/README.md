@@ -2,7 +2,7 @@
 
 A structured cross-project memory layer for Claude Code. Adds:
 
-- **Global memory** at `~/.claude/memory/` — knowledge that follows you across every project (an index `MEMORY.md` plus topic files under `general.md` and `tools/`)
+- **Global memory** at `~/.claude/memory/` — knowledge that follows you across every project (an index `MEMORY.md` plus topic files: `general.md` for cross-cutting conventions, `tools/{name}.md` for tool/library notes, `domain/{topic}.md` for cross-tool knowledge areas)
 - **Per-project memory** at `~/.claude/project-memory/{slug}/` — starts as a single `MEMORY.md` and graduates into an index + topic-file tree as the project's knowledge grows
 - **Auto-injection** of memory into every session (including subagent sessions) via a PreToolUse hook with session-based dedup + Agent-tool-boundary detection + mtime-based re-injection on mid-session writes
 - **Auto-write** of memo-worthy turns via a Stop hook: a detached worker spawns `claude -p` to audit the recent turn and persist gotchas, preferences, project state, and decisions automatically — using the user's existing Claude Code auth (no API key required)
@@ -110,9 +110,14 @@ See `examples/memory-system.local.md` for the template.
 ~/.claude/memory/
 ├── MEMORY.md           # global index
 ├── general.md          # cross-project conventions
-└── tools/
-    ├── {name}.md       # narrow notes per tool/library
-    └── {name}/         # subfolder when a topic outgrows one file
+├── tools/
+│   ├── {name}.md       # narrow notes per tool/library
+│   └── {name}/         # subfolder when a topic outgrows one file
+│       ├── overview.md
+│       └── {sub-topic}.md
+└── domain/
+    ├── {topic}.md      # cross-tool knowledge area (problem space spanning multiple tools)
+    └── {topic}/        # subfolder when a topic outgrows one file
         ├── overview.md
         └── {sub-topic}.md
 

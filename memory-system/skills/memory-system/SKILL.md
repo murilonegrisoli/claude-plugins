@@ -30,9 +30,13 @@ Choose the destination by scope:
 | Project-specific (small project, no topic files yet) | `~/.claude/project-memory/{slug}/MEMORY.md` |
 | Project-specific (topic files exist) | `~/.claude/project-memory/{slug}/{topic}.md` |
 | Project topic with sub-topics accumulating | `~/.claude/project-memory/{slug}/{topic}/{sub-topic}.md` |
-| Cross-project tool/library | `~/.claude/memory/tools/{name}.md` |
+| Cross-project tool/library (specific named tool) | `~/.claude/memory/tools/{name}.md` |
 | Single tool with multi-file knowledge accumulating | `~/.claude/memory/tools/{name}/{sub-topic}.md` |
+| Cross-tool knowledge area (problem space spanning multiple tools, not tied to one) | `~/.claude/memory/domain/{topic}.md` |
+| Domain topic with sub-topics accumulating | `~/.claude/memory/domain/{topic}/{sub-topic}.md` |
 | Cross-cutting convention or env fact | `~/.claude/memory/general.md` |
+
+**`tools/` vs `domain/`:** if the knowledge is "how to use tool X", route to `tools/{name}.md`. If it's "how to think about problem area Y" (e.g. memory systems, auth flows, monorepo strategy) and references multiple tools or none, route to `domain/{topic}.md`.
 
 **Split rule (uniform across scopes):** when any leaf file grows beyond ~150 lines or accumulates 3+ distinct sub-topics, split into a subfolder under the same name. Apply via the `reorganize-memory` skill — write-time logic does NOT split; it just picks the right existing target.
 
@@ -56,6 +60,7 @@ Before writing, ensure the target structure exists. Create only what's missing.
 2. Create `~/.claude/memory/MEMORY.md` index from the template if missing
 3. Create `~/.claude/memory/general.md` from the template if missing
 4. Create `~/.claude/memory/tools/` directory if writing a tool entry
+5. Create `~/.claude/memory/domain/` directory if writing a domain entry
 
 **Project init** (when writing project-scoped memory):
 1. Resolve the slug: basename of `$CLAUDE_PROJECT_DIR` (or fallback to `cwd`)

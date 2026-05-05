@@ -81,6 +81,25 @@ Add new sub-topic files as the knowledge accumulates.
 
 ---
 
+## Domain memory — `~/.claude/memory/domain/{topic}.md`
+
+Use `domain/` for cross-tool knowledge areas (problem spaces) that span multiple tools or aren't tied to a specific named tool — e.g. memory systems, auth flows, monorepo strategy, deployment topology. If the knowledge is "how to use tool X", use `tools/{name}.md` instead.
+
+```markdown
+# {Topic} — {short scope description}
+
+Notes on {topic} as a problem area. Each entry is a `## H2` section with an italic date line (`*YYYY-MM-DD*`) directly under the heading, prose explanation, and structured tags (`**Why:**`, `**Apply:**`, etc.) where they help.
+
+## Example Entry
+*YYYY-MM-DD*
+
+(Populated as knowledge accumulates)
+```
+
+When the file grows beyond ~150 lines or accumulates 3+ distinct sub-topics, split into a subfolder under the same name (`domain/{topic}/{sub-topic}.md`). Same `overview.md` pattern as the tool subfolder above.
+
+---
+
 ## Project memory — single-file mode
 
 The slug is the basename of the project's working directory. The `memory-system` plugin's PreToolUse hook resolves this path automatically and lazy-creates the directory + file when the first project memory write happens.
