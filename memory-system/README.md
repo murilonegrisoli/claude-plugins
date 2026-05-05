@@ -14,6 +14,8 @@ A structured cross-project memory layer for Claude Code. Adds:
 
 Native Claude Code memory (`CLAUDE.md`) is great but project-scoped. This plugin adds a global layer for tool/library knowledge that persists across projects, plus structure and lifecycle for managing it as it grows.
 
+**vs [claude-mem](https://github.com/thedotmack/claude-mem):** different goals, different shapes. claude-mem is session-replay memory — every tool call captured, compressed via `claude-agent-sdk`, stored in SQLite + vector search, retrieved at session start. Optimized for "what did I do in this repo last week" recall. This plugin is a curated knowledge layer — classified markdown topic files you read, edit, grep, and version-control yourself. Optimized for gotchas, conventions, decisions, and tool/library knowledge you'd document anyway. The two solve adjacent problems and run fine alongside each other; pick this one if you want a knowledge graph you own as plain text, not a vector index.
+
 ## Prerequisites
 
 - Python 3.8+ on PATH (the PreToolUse hook is a tiny python script). Pre-installed on macOS and every Linux distro. On Windows, install from python.org or use the `py` launcher — note that the `python` command may resolve to a Microsoft Store stub if Python isn't actually installed.
