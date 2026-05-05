@@ -1,6 +1,6 @@
 {
   "name": "memory-system",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Internal devDeps for memory-system plugin tests + typecheck. Plugin itself ships pure stdlib .mjs (Node 18+) — these deps are not required at runtime.",
   "type": "module",

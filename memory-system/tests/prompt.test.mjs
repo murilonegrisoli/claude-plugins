@@ -43,7 +43,7 @@ describe("AUDITOR_PROMPT", () => {
 
 describe("buildCommand", () => {
   it("includes all required claude flags", () => {
-    const cmd = buildCommand("haiku", "/usr/bin/claude");
+    const cmd = buildCommand("haiku", "/usr/bin/claude", "test-uuid-1");
     expect(cmd[0]).toBe("/usr/bin/claude");
     expect(cmd).toContain("--print");
     expect(cmd).toContain("--model");
@@ -56,13 +56,13 @@ describe("buildCommand", () => {
   });
 
   it("propagates the model arg", () => {
-    const cmd = buildCommand("sonnet", "/x/claude");
+    const cmd = buildCommand("sonnet", "/x/claude", "test-uuid-2");
     const idx = cmd.indexOf("--model");
     expect(cmd[idx + 1]).toBe("sonnet");
   });
 
   it("does not include destructive tools in --allowed-tools", () => {
-    const cmd = buildCommand("haiku", "/x/claude");
+    const cmd = buildCommand("haiku", "/x/claude", "test-uuid-3");
     const allowedIdx = cmd.indexOf("--allowed-tools");
     const allowed = cmd[allowedIdx + 1];
     expect(allowed).not.toContain("Bash");
@@ -71,8 +71,15 @@ describe("buildCommand", () => {
   });
 
   it("includes --add-dir for memory paths", () => {
-    const cmd = buildCommand("haiku", "/x/claude");
+    const cmd = buildCommand("haiku", "/x/claude", "test-uuid-4");
     const addDirCount = cmd.filter((a) => a === "--add-dir").length;
     expect(addDirCount).toBe(2);
+  });
+
+  it("includes --session-id with the provided uuid (v0.4.3+ tombstone workaround)", () => {
+    const cmd = buildCommand("haiku", "/x/claude", "abc-123-def");
+    const idx = cmd.indexOf("--session-id");
+    expect(idx).toBeGreaterThan(-1);
+    expect(cmd[idx + 1]).toBe("abc-123-def");
   });
 });

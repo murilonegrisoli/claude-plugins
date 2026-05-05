@@ -17,6 +17,7 @@
  * inherited so any nested Stop hook bails immediately (loop prevention).
  */
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -371,11 +372,16 @@ export function resolveClaudeBin() {
  * Build the `claude` invocation. The prompt is piped via stdin (not argv)
  * because long transcripts blow the Windows 32k command-line limit.
  *
+ * `sessionId` is a UUID we control so the tombstone jsonl that claude
+ * writes (despite `--no-session-persistence` — anthropic-side bug as of
+ * 2.1.112+) has a known path we can delete after the run.
+ *
  * @param {string} model
  * @param {string} claudeBin
+ * @param {string} sessionId
  * @returns {string[]}
  */
-export function buildCommand(model, claudeBin) {
+export function buildCommand(model, claudeBin, sessionId) {
   return [
     claudeBin,
     "--print",
@@ -383,9 +389,64 @@ export function buildCommand(model, claudeBin) {
     "--permission-mode", "bypassPermissions",
     "--allowed-tools", AUDITOR_ALLOWED_TOOLS,
     "--no-session-persistence",
+    "--session-id", sessionId,
     "--add-dir", path.join(CLAUDE_HOME, "memory"),
     "--add-dir", path.join(CLAUDE_HOME, "project-memory"),
   ];
+}
+
+/**
+ * Compute the directory name claude uses to namespace per-cwd session
+ * jsonls under `~/.claude/projects/`. Replaces `:`, `\`, `/`, `.` with `-`,
+ * matching claude's observed naming convention.
+ *
+ * Examples:
+ * - `C:\.projects\claude-plugins` -> `C---projects-claude-plugins`
+ * - `/home/u/work` -> `-home-u-work`
+ *
+ * @param {string} cwd
+ * @returns {string}
+ */
+export function cwdToSlug(cwd) {
+  return cwd.replace(/[\\/:.]/g, "-");
+}
+
+/**
+ * Resolve the tombstone jsonl path claude would write for a given cwd
+ * + session UUID under `~/.claude/projects/<slug>/<uuid>.jsonl`.
+ *
+ * @param {string} cwd
+ * @param {string} sessionId
+ * @returns {string}
+ */
+export function tombstonePath(cwd, sessionId) {
+  return path.join(
+    os.homedir(),
+    ".claude",
+    "projects",
+    cwdToSlug(cwd),
+    `${sessionId}.jsonl`,
+  );
+}
+
+/**
+ * Delete the tombstone jsonl claude leaves behind despite
+ * `--no-session-persistence` (anthropic-side bug as of 2.1.112+).
+ * Logs the outcome. ENOENT is silent — that means anthropic eventually
+ * fixed the underlying bug and our workaround became a no-op.
+ *
+ * @param {string} cwd
+ * @param {string} sessionId
+ */
+function deleteTombstone(cwd, sessionId) {
+  const target = tombstonePath(cwd, sessionId);
+  try {
+    fs.unlinkSync(target);
+    log(`deleted tombstone: ${target}`);
+  } catch (err) {
+    if (/** @type {any} */ (err).code === "ENOENT") return;
+    log(`tombstone delete failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**
@@ -481,7 +542,8 @@ function main() {
 
   const projectSlug = resolveSlug(cwd, { transcriptPath });
   const prompt = AUDITOR_PROMPT(cwd, projectSlug, excerpt);
-  const cmd = buildCommand(model, claudeBin);
+  const auditSessionId = randomUUID();
+  const cmd = buildCommand(model, claudeBin, auditSessionId);
 
   let result;
   try {
@@ -524,6 +586,7 @@ function main() {
   info.last_audit_epoch = Date.now() / 1000;
   if (lastMsgId) info.last_audited_turn_id = lastMsgId;
   saveState(state);
+  deleteTombstone(cwd, auditSessionId);
   log(`complete: session=${sessionId} last_msg=${lastMsgId}`);
 }
 
