@@ -1,0 +1,17 @@
+{
+  "name": "memory-system",
+  "version": "0.4.1",
+  "private": true,
+  "description": "Internal devDeps for memory-system plugin tests + typecheck. Plugin itself ships pure stdlib .mjs (Node 18+) — these deps are not required at runtime.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

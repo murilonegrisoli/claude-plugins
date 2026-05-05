@@ -26,6 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveSlug } from "./slug.mjs";
 
@@ -36,7 +37,7 @@ const PROJECT_MEMORY_ROOT = path.join(CLAUDE_HOME, "project-memory");
 const STATE_DIR = path.join(CLAUDE_HOME, "cache", "memory-system");
 const STATE_FILE = path.join(STATE_DIR, "state.json");
 
-const SESSION_TTL_SECONDS = 7 * 86400;
+export const SESSION_TTL_SECONDS = 7 * 86400;
 
 /** @returns {Record<string, unknown>} */
 function readInput() {
@@ -76,7 +77,7 @@ function readTextSafe(p) {
 }
 
 /** @param {string} cwd */
-function isDisabledForProject(cwd) {
+export function isDisabledForProject(cwd) {
   const config = path.join(cwd, ".claude", "memory-system.local.md");
   if (!isFile(config)) return false;
   const content = readTextSafe(config);
@@ -98,14 +99,32 @@ function isDisabledForProject(cwd) {
 }
 
 /**
- * @typedef {{ first_seen?: string, first_seen_epoch?: number, last_seen_epoch?: number, last_inject_epoch?: number, last_was_agent?: boolean, last_slug?: string }} SessionInfo
+ * @typedef {{
+ *   first_seen?: string,
+ *   first_seen_epoch?: number,
+ *   last_seen_epoch?: number,
+ *   last_inject_epoch?: number,
+ *   pending_inject_epoch?: number,
+ *   last_was_agent?: boolean,
+ *   last_slug?: string,
+ * }} SessionInfo
  * @typedef {{ sessions: Record<string, SessionInfo> }} State
+ *
+ * Two-phase inject state (v0.4.1+):
+ * - `pending_inject_epoch` is set in PreToolUse when we emit additionalContext
+ * - `last_inject_epoch` is set in PostToolUse (`confirm-inject.mjs`) once
+ *   the tool actually ran. PostToolUse does not fire when the user rejects
+ *   the tool at the permission prompt, so a rejected tool leaves the state
+ *   "unconfirmed" and the next PreToolUse re-injects.
  */
 
-/** @returns {State} */
-function loadState() {
-  if (!isFile(STATE_FILE)) return { sessions: {} };
-  const raw = readTextSafe(STATE_FILE);
+/**
+ * @param {string} [stateFile]
+ * @returns {State}
+ */
+export function loadState(stateFile = STATE_FILE) {
+  if (!isFile(stateFile)) return { sessions: {} };
+  const raw = readTextSafe(stateFile);
   if (raw === null) return { sessions: {} };
   try {
     const parsed = JSON.parse(raw);
@@ -116,13 +135,16 @@ function loadState() {
   }
 }
 
-/** @param {State} state */
-function saveState(state) {
+/**
+ * @param {State} state
+ * @param {string} [stateFile]
+ */
+export function saveState(state, stateFile = STATE_FILE) {
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    const tmp = STATE_FILE + ".tmp";
+    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+    const tmp = stateFile + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
-    fs.renameSync(tmp, STATE_FILE);
+    fs.renameSync(tmp, stateFile);
   } catch {
     // best-effort; never block the hook
   }
@@ -130,10 +152,11 @@ function saveState(state) {
 
 /**
  * @param {State} state
+ * @param {number} [nowEpoch] for testability; defaults to current time
  * @returns {State}
  */
-function pruneOldSessions(state) {
-  const cutoff = Date.now() / 1000 - SESSION_TTL_SECONDS;
+export function pruneOldSessions(state, nowEpoch = Date.now() / 1000) {
+  const cutoff = nowEpoch - SESSION_TTL_SECONDS;
   /** @type {Record<string, SessionInfo>} */
   const kept = {};
   for (const [sid, info] of Object.entries(state.sessions)) {
@@ -178,26 +201,25 @@ function maxMtimeInTree(root, current) {
 /**
  * Latest mtime across all watched memory files.
  *
- * Watches the entire project memory tree (`~/.claude/project-memory/{slug}/**\/*.md`)
- * and the entire global memory tree (`~/.claude/memory/**\/*.md`). The hook
- * only injects MEMORY.md (the index), but bumping mtime on any topic file
- * typically coincides with a skill-driven index update — watching the whole
- * tree just provides safety against missed index bumps.
- *
  * @param {string} slug
+ * @param {string} [claudeHome]
  * @returns {number}
  */
-function watchedMaxMtime(slug) {
+export function watchedMaxMtime(slug, claudeHome = CLAUDE_HOME) {
   let max = 0;
-  max = maxMtimeInTree(path.join(PROJECT_MEMORY_ROOT, slug), max);
-  max = maxMtimeInTree(path.join(CLAUDE_HOME, "memory"), max);
+  max = maxMtimeInTree(path.join(claudeHome, "project-memory", slug), max);
+  max = maxMtimeInTree(path.join(claudeHome, "memory"), max);
   return max;
 }
 
-/** @param {string} slug */
-function composeMessage(slug) {
-  const projectPath = path.join(PROJECT_MEMORY_ROOT, slug, "MEMORY.md");
+/**
+ * @param {string} slug
+ * @param {string} [claudeHome]
+ */
+export function composeMessage(slug, claudeHome = CLAUDE_HOME) {
+  const projectPath = path.join(claudeHome, "project-memory", slug, "MEMORY.md");
   const projectContent = readTextSafe(projectPath);
+  const globalIndex = path.join(claudeHome, "memory", "MEMORY.md");
 
   /** @type {string[]} */
   const parts = [];
@@ -208,12 +230,73 @@ function composeMessage(slug) {
     parts.push(`(no project MEMORY.md for \`${slug}\` at ${projectPath})`);
   }
 
-  const indexContent = readTextSafe(GLOBAL_INDEX);
+  const indexContent = readTextSafe(globalIndex);
   if (indexContent !== null) {
     parts.push(`=== Global Memory Index ===\n${indexContent.trim()}`);
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Pure decision function: given existing session info + current tool/slug/mtime,
+ * decide whether to inject and return the updated session info.
+ *
+ * @param {SessionInfo | undefined} info
+ * @param {string} toolName
+ * @param {string} slug
+ * @param {number} currentMtime
+ * @param {number} nowEpoch
+ * @returns {{ shouldInject: boolean, info: SessionInfo }}
+ */
+export function decideInject(info, toolName, slug, currentMtime, nowEpoch) {
+  let shouldInject = false;
+  /** @type {SessionInfo} */
+  let next;
+
+  if (!info) {
+    shouldInject = true;
+    next = {
+      first_seen: new Date(nowEpoch * 1000).toISOString(),
+      first_seen_epoch: nowEpoch,
+    };
+  } else {
+    next = { ...info };
+    if (info.last_was_agent && toolName !== "Agent") {
+      shouldInject = true;
+    } else if (info.last_slug !== slug) {
+      shouldInject = true;
+    } else if (currentMtime > (info.last_inject_epoch ?? 0)) {
+      shouldInject = true;
+    }
+  }
+
+  next.last_was_agent = toolName === "Agent";
+  next.last_seen_epoch = nowEpoch;
+  next.last_slug = slug;
+  if (shouldInject) next.pending_inject_epoch = nowEpoch;
+
+  return { shouldInject, info: next };
+}
+
+/**
+ * PostToolUse-side state promotion: confirm a pending inject by copying
+ * `pending_inject_epoch` to `last_inject_epoch` and clearing pending.
+ *
+ * If no session info or no pending, this is a no-op (returns the same state).
+ *
+ * @param {State} state
+ * @param {string} sessionId
+ * @returns {{ promoted: boolean, state: State }}
+ */
+export function confirmInject(state, sessionId) {
+  const info = state.sessions[sessionId];
+  if (!info || typeof info.pending_inject_epoch !== "number") {
+    return { promoted: false, state };
+  }
+  info.last_inject_epoch = info.pending_inject_epoch;
+  delete info.pending_inject_epoch;
+  return { promoted: true, state };
 }
 
 /** @param {string | null} context */
@@ -250,38 +333,23 @@ function main() {
   });
 
   const state = loadState();
-  const sessions = state.sessions;
-  let info = sessions[sessionId];
   const nowEpoch = Date.now() / 1000;
+  const currentMtime = watchedMaxMtime(slug);
 
-  let shouldInject = false;
-  if (!info) {
-    shouldInject = true;
-    info = {
-      first_seen: new Date().toISOString(),
-      first_seen_epoch: nowEpoch,
-    };
-  } else if (info.last_was_agent && toolName !== "Agent") {
-    // Previous tool was Agent (subagent likely spawned). Re-inject so memory
-    // becomes visible inside the subagent context.
-    shouldInject = true;
-  } else if (info.last_slug !== slug) {
-    // Slug changed mid-session — re-inject for the new project's memory.
-    shouldInject = true;
-  } else if (watchedMaxMtime(slug) > (info.last_inject_epoch ?? 0)) {
-    // Watched memory file changed since our last inject.
-    shouldInject = true;
-  }
-
-  info.last_was_agent = toolName === "Agent";
-  info.last_seen_epoch = nowEpoch;
-  info.last_slug = slug;
-  if (shouldInject) info.last_inject_epoch = nowEpoch;
-  sessions[sessionId] = info;
-  pruneOldSessions(state);
+  const { shouldInject, info } = decideInject(
+    state.sessions[sessionId],
+    toolName,
+    slug,
+    currentMtime,
+    nowEpoch,
+  );
+  state.sessions[sessionId] = info;
+  pruneOldSessions(state, nowEpoch);
   saveState(state);
 
   emit(shouldInject ? composeMessage(slug) : null);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}

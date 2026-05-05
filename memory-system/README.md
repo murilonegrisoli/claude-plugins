@@ -22,19 +22,17 @@ Native Claude Code memory (`CLAUDE.md`) is great but project-scoped. This plugin
 
 ## Install
 
-From a marketplace:
-
 ```
-/plugin marketplace add <repo-url>
-/plugin install memory-system
+/plugin marketplace add https://github.com/murilonegrisoli/claude-plugins
+/plugin install memory-system@negrisoli
 /reload-plugins
 ```
 
-For local development:
+For local development, point the marketplace at a local path instead:
 
 ```
-/plugin marketplace add /path/to/this/repo
-/plugin install memory-system@<marketplace-name>
+/plugin marketplace add /path/to/your/clone/of/claude-plugins
+/plugin install memory-system@negrisoli
 /reload-plugins
 ```
 
@@ -53,6 +51,16 @@ On the first tool call of every session (including subagents):
 Subsequent tool calls in the same session stay silent — state is tracked at `~/.claude/cache/memory-system/state.json`. Sessions older than 7 days are pruned automatically.
 
 The hook also re-injects mid-session if any watched memory file has been modified since the last injection. The watch covers the entire global memory tree (`~/.claude/memory/**/*.md`) and the entire active project's memory tree (`~/.claude/project-memory/{slug}/**/*.md`). This covers concurrent sessions writing to memory, the user editing a memory file by hand, and Claude itself writing memory mid-flow — the next tool call sees the fresh content rather than the stale snapshot from session start.
+
+**Rejected tool calls (v0.4.1+):**
+
+PreToolUse hooks fire *before* the permission prompt resolves. If the user rejects the tool, the hook's `additionalContext` is dropped before it reaches the model — but state has already been updated. Without coordination, the next tool call would see "already injected" and skip re-injection, silently losing the payload.
+
+memory-system uses a two-phase pattern to handle this:
+
+- **PreToolUse** (`inject-memory.mjs`) sets `pending_inject_epoch` on the session, NOT `last_inject_epoch`.
+- **PostToolUse** (`confirm-inject.mjs`) fires only when the tool actually ran (i.e. the user approved). It promotes `pending_inject_epoch` → `last_inject_epoch`.
+- If the tool is rejected, PostToolUse never fires. State stays "unconfirmed" — `last_inject_epoch` is unset and the next PreToolUse re-injects via the existing mtime fallback (`mtime > last_inject_epoch ?? 0` evaluates to true for any nonzero mtime).
 
 ## How memory gets written
 
@@ -203,6 +211,25 @@ Memory will re-inject on the next tool call of every active session, and auto-wr
 - Check `audit.log` for `skip:` entries with reasons
 - The default model is `haiku`. For sharper decisions, run `MEMORY_SYSTEM_AUDIT_MODEL=sonnet` in your shell before the audit fires
 - The audit window is the last 15 user/assistant messages from the session jsonl (tool blobs are summarized, not counted). If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X"). Smaller window vs v0.3.3 (was 30) is offset by per-turn audit firing — content cycles through multiple sequential audits as the window slides forward.
+
+## Development
+
+Tests live under `tests/` (vitest). The plugin itself ships pure stdlib `.mjs` (Node 18+) — vitest + typescript are devDependencies only and not required at runtime.
+
+```
+cd memory-system
+npm install
+npm test           # one-shot run
+npm run test:watch # watch mode
+npm run typecheck  # tsc --checkJs across hooks/ + tests/
+```
+
+Coverage:
+
+- **Pure unit tests** for transcript parsing (`renderEvent`, `summarizeToolUse`, `summarizeToolResult`, `readTranscriptMessages`), action-line extraction, argv parsing, prompt template substitution, command builder, inject decision logic, and Stop hook gate logic.
+- **Integration tests** (real fs, tmp dirs) for the slug-resolution chain, `state.json` round-trip, and per-project disable config.
+
+What's intentionally NOT tested: actual `claude -p` invocation (requires auth + costs money — stays manual).
 
 ## License
 

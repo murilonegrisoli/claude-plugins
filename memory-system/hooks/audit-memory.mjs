@@ -16,22 +16,13 @@
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const HOME = os.homedir();
-const CLAUDE_HOME = path.join(HOME, ".claude");
-const STATE_DIR = path.join(CLAUDE_HOME, "cache", "memory-system");
-// AUDIT_STATE_FILE kept for parity with .py — not currently consumed here,
-// but the path is stable so future gates (e.g. dedup) can reuse it.
-// eslint-disable-next-line no-unused-vars
-const AUDIT_STATE_FILE = path.join(STATE_DIR, "audit-state.json");
 
 const HOOKS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_SCRIPT = path.join(HOOKS_DIR, "memory_auditor", "worker.mjs");
 
-const AUDITOR_ENV_VAR = "MEMORY_SYSTEM_AUDITOR";
+export const AUDITOR_ENV_VAR = "MEMORY_SYSTEM_AUDITOR";
 
 /** @returns {Record<string, unknown>} */
 function readInput() {
@@ -43,9 +34,12 @@ function readInput() {
   }
 }
 
-/** @returns {boolean} */
-function isRecursion() {
-  return process.env[AUDITOR_ENV_VAR] === "1";
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+export function isRecursion(env = process.env) {
+  return env[AUDITOR_ENV_VAR] === "1";
 }
 
 /** @param {string} p */
@@ -58,7 +52,7 @@ function isFile(p) {
 }
 
 /** @param {string} cwd */
-function isDisabledForProject(cwd) {
+export function isDisabledForProject(cwd) {
   const config = path.join(cwd, ".claude", "memory-system.local.md");
   if (!isFile(config)) return false;
   let content;
@@ -83,6 +77,34 @@ function isDisabledForProject(cwd) {
   return false;
 }
 
+/**
+ * @typedef {{
+ *   isRecursion: boolean,
+ *   stopHookActive: boolean,
+ *   sessionId: string,
+ *   transcriptPath: string,
+ *   transcriptExists: boolean,
+ *   isDisabled: boolean,
+ *   workerExists: boolean,
+ * }} GateInput
+ */
+
+/**
+ * Pure gate decision: should we spawn the worker?
+ *
+ * @param {GateInput} input
+ * @returns {{ spawn: boolean, reason: string | null }}
+ */
+export function decideGate(input) {
+  if (input.isRecursion) return { spawn: false, reason: "recursion" };
+  if (input.stopHookActive) return { spawn: false, reason: "stop_hook_active" };
+  if (!input.sessionId || !input.transcriptPath) return { spawn: false, reason: "missing_args" };
+  if (!input.transcriptExists) return { spawn: false, reason: "no_transcript" };
+  if (input.isDisabled) return { spawn: false, reason: "project_disabled" };
+  if (!input.workerExists) return { spawn: false, reason: "no_worker" };
+  return { spawn: true, reason: null };
+}
+
 function emitContinue() {
   process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }));
   process.exit(0);
@@ -95,13 +117,17 @@ function main() {
   const transcriptPath = typeof data.transcript_path === "string" ? data.transcript_path : "";
   const stopHookActive = Boolean(data.stop_hook_active);
 
-  // Gates
-  if (isRecursion()) emitContinue();
-  if (stopHookActive) emitContinue();
-  if (!sessionId || !transcriptPath) emitContinue();
-  if (!isFile(transcriptPath)) emitContinue();
-  if (isDisabledForProject(cwd)) emitContinue();
-  if (!isFile(WORKER_SCRIPT)) emitContinue();
+  const decision = decideGate({
+    isRecursion: isRecursion(),
+    stopHookActive,
+    sessionId,
+    transcriptPath,
+    transcriptExists: !!transcriptPath && isFile(transcriptPath),
+    isDisabled: isDisabledForProject(cwd),
+    workerExists: isFile(WORKER_SCRIPT),
+  });
+
+  if (!decision.spawn) emitContinue();
 
   // Spawn detached worker
   try {
@@ -129,4 +155,6 @@ function main() {
   emitContinue();
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}

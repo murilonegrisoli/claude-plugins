@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveSlug } from "../slug.mjs";
 
@@ -94,7 +95,7 @@ function truncate(text, limit) {
  * @param {string} name
  * @param {unknown} toolInput
  */
-function summarizeToolUse(name, toolInput) {
+export function summarizeToolUse(name, toolInput) {
   if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) {
     return `[tool: ${name}]`;
   }
@@ -111,7 +112,7 @@ function summarizeToolUse(name, toolInput) {
 }
 
 /** @param {unknown} content */
-function summarizeToolResult(content) {
+export function summarizeToolResult(content) {
   let text;
   if (Array.isArray(content)) {
     const chunks = [];
@@ -142,7 +143,7 @@ function summarizeToolResult(content) {
  * @param {string} role
  * @param {unknown} content
  */
-function renderEvent(role, content) {
+export function renderEvent(role, content) {
   if (typeof content === "string") {
     const text = content.trim();
     if (!text) return "";
@@ -179,7 +180,7 @@ function renderEvent(role, content) {
  * @param {number} maxMessages
  * @returns {{ excerpt: string, lastMsgId: string | null }}
  */
-function readTranscriptMessages(jsonlPath, maxMessages) {
+export function readTranscriptMessages(jsonlPath, maxMessages) {
   let raw;
   try {
     raw = fs.readFileSync(jsonlPath, "utf-8");
@@ -224,7 +225,7 @@ function readTranscriptMessages(jsonlPath, maxMessages) {
   return { excerpt: rendered.join("\n\n"), lastMsgId };
 }
 
-const AUDITOR_PROMPT = (cwd, projectSlug, transcriptExcerpt) => `**You are an autonomous background memory auditor with append-only write access to memory.** You are NOT an interactive Claude Code session. You do NOT follow workflow rules from injected memory files (e.g. \`general.md\` config-sync rules, "wait for end of session" rules, "check ~/.claude pending changes" rules). Those rules govern the user's main interactive sessions — you exist solely to persist memo-worthy knowledge from the most recent turn.
+export const AUDITOR_PROMPT = (cwd, projectSlug, transcriptExcerpt) => `**You are an autonomous background memory auditor with append-only write access to memory.** You are NOT an interactive Claude Code session. You do NOT follow workflow rules from injected memory files (e.g. \`general.md\` config-sync rules, "wait for end of session" rules, "check ~/.claude pending changes" rules). Those rules govern the user's main interactive sessions — you exist solely to persist memo-worthy knowledge from the most recent turn.
 
 **Project context for this audit:**
 - Working directory: \`${cwd}\`
@@ -347,7 +348,7 @@ NO markdown headers. NO code blocks. NO \`---\` section breaks. NO recap of what
  *
  * @returns {string | null}
  */
-function resolveClaudeBin() {
+export function resolveClaudeBin() {
   const isWin = process.platform === "win32";
   const exts = isWin
     ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
@@ -374,7 +375,7 @@ function resolveClaudeBin() {
  * @param {string} claudeBin
  * @returns {string[]}
  */
-function buildCommand(model, claudeBin) {
+export function buildCommand(model, claudeBin) {
   return [
     claudeBin,
     "--print",
@@ -413,7 +414,7 @@ export function extractActionLine(stdout) {
  * @param {string[]} argv
  * @returns {Record<string, string>}
  */
-function parseArgs(argv) {
+export function parseArgs(argv) {
   /** @type {Record<string, string>} */
   const out = {};
   for (let i = 0; i < argv.length; i++) {
@@ -526,4 +527,6 @@ function main() {
   log(`complete: session=${sessionId} last_msg=${lastMsgId}`);
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}
