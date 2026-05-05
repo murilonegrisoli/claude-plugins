@@ -212,6 +212,14 @@ export function watchedMaxMtime(slug, claudeHome = CLAUDE_HOME) {
   return max;
 }
 
+const INJECT_DIRECTIVE = `=== HOW TO USE THE MEMORY BELOW ===
+
+The blocks below are INDEXES — pointers to topic files, not the knowledge itself. Each description is a one-line label; the actual gotchas, conventions, and decisions live INSIDE the linked .md files.
+
+**Before responding:** for each topic file whose description could relate to your current task (cwd, files you've touched, the user's prompt), use Read to load it. Tool files (\`tools/*.md\`) and project files (\`project-memory/<slug>/*.md\`) are highest priority — they hold knowledge you cannot derive from the code.
+
+If you're unsure whether a file is relevant, Read it. Reading is cheap; missing a gotcha is expensive. If you respond without having Read any topic file in a session where the index pointed to relevant ones, you've probably missed something — go back and Read.`;
+
 /**
  * @param {string} slug
  * @param {string} [claudeHome]
@@ -222,7 +230,7 @@ export function composeMessage(slug, claudeHome = CLAUDE_HOME) {
   const globalIndex = path.join(claudeHome, "memory", "MEMORY.md");
 
   /** @type {string[]} */
-  const parts = [];
+  const parts = [INJECT_DIRECTIVE];
 
   if (projectContent !== null) {
     parts.push(`=== Project MEMORY.md (\`${slug}\`) ===\n${projectContent.trim()}`);

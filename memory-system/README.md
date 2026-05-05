@@ -41,12 +41,19 @@ For local development, point the marketplace at a local path instead:
 On the first tool call of every session (including subagents):
 
 ```
+=== HOW TO USE THE MEMORY BELOW ===
+<directive instructing the model to treat the indexes as pointers,
+ not knowledge — and to proactively Read topic files relevant to
+ the current task before responding>
+
 === Project MEMORY.md (`<slug>`) ===
 <contents of ~/.claude/project-memory/<slug>/MEMORY.md if it exists>
 
 === Global Memory Index ===
 <contents of ~/.claude/memory/MEMORY.md>
 ```
+
+**The directive (v0.4.2+)** addresses a specific failure mode: without it, models tend to treat the one-line description in each index row as the actual knowledge and never load the topic files. The directive explicitly reframes the index as a list of pointers, tells the model to Read on relevance, and gives a tiebreaker rule ("if unsure, Read — reading is cheap, missing a gotcha is expensive").
 
 Subsequent tool calls in the same session stay silent — state is tracked at `~/.claude/cache/memory-system/state.json`. Sessions older than 7 days are pruned automatically.
 
