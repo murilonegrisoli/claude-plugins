@@ -28,6 +28,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Sibling slug resolver. inject-memory.py runs as a script from
+# `${CLAUDE_PLUGIN_ROOT}/hooks/`, so Python's sys.path[0] already covers
+# this dir — no manipulation needed.
+from slug import resolve_slug
+
 HOME = Path.home()
 CLAUDE_HOME = HOME / ".claude"
 GLOBAL_INDEX = CLAUDE_HOME / "memory" / "MEMORY.md"
@@ -99,10 +104,6 @@ def prune_old_sessions(state: dict) -> dict:
     return state
 
 
-def project_slug(cwd: Path) -> str:
-    return cwd.name
-
-
 def _max_mtime_in_tree(root: Path, current: float) -> float:
     """Return max(current, max mtime of any `.md` under root)."""
     try:
@@ -118,7 +119,7 @@ def _max_mtime_in_tree(root: Path, current: float) -> float:
     return current
 
 
-def watched_max_mtime(cwd: Path) -> float:
+def watched_max_mtime(slug: str) -> float:
     """Latest mtime across all watched memory files.
 
     Watches the entire project memory tree (`~/.claude/project-memory/{slug}/**/*.md`)
@@ -128,7 +129,7 @@ def watched_max_mtime(cwd: Path) -> float:
     tree just provides safety against missed index bumps.
     """
     max_mtime = 0.0
-    max_mtime = _max_mtime_in_tree(PROJECT_MEMORY_ROOT / project_slug(cwd), max_mtime)
+    max_mtime = _max_mtime_in_tree(PROJECT_MEMORY_ROOT / slug, max_mtime)
     max_mtime = _max_mtime_in_tree(CLAUDE_HOME / "memory", max_mtime)
     return max_mtime
 
@@ -140,8 +141,7 @@ def read_text_safe(path: Path) -> str | None:
         return None
 
 
-def compose_message(cwd: Path) -> str:
-    slug = project_slug(cwd)
+def compose_message(slug: str) -> str:
     project_path = PROJECT_MEMORY_ROOT / slug / "MEMORY.md"
     project_content = read_text_safe(project_path)
 
@@ -179,12 +179,17 @@ def main() -> None:
     cwd_str = data.get("cwd") or os.getcwd()
     cwd = Path(cwd_str)
     tool_name = data.get("tool_name") or ""
+    transcript_path_str = data.get("transcript_path") or ""
+    tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else None
 
     if not session_id:
         emit(None)
 
     if is_disabled_for_project(cwd):
         emit(None)
+
+    transcript_path = Path(transcript_path_str) if transcript_path_str else None
+    slug = resolve_slug(cwd, transcript_path=transcript_path, current_tool_input=tool_input)
 
     state = load_state()
     sessions = state.setdefault("sessions", {})
@@ -204,20 +209,26 @@ def main() -> None:
         # Agent, so this is plausibly the subagent's first tool call. Re-inject
         # to make memory visible inside the subagent context.
         should_inject = True
-    elif watched_max_mtime(cwd) > info.get("last_inject_epoch", 0):
+    elif info.get("last_slug") != slug:
+        # Slug resolution changed mid-session (e.g. user cd'd into a plugin
+        # subfolder, or recent file activity shifted focus). Re-inject so
+        # the new project's memory becomes visible.
+        should_inject = True
+    elif watched_max_mtime(slug) > info.get("last_inject_epoch", 0):
         # Watched memory file changed since our last inject — re-inject so the
         # session sees the fresh content.
         should_inject = True
 
     info["last_was_agent"] = (tool_name == "Agent")
     info["last_seen_epoch"] = now_epoch
+    info["last_slug"] = slug
     if should_inject:
         info["last_inject_epoch"] = now_epoch
     sessions[session_id] = info
     state = prune_old_sessions(state)
     save_state(state)
 
-    emit(compose_message(cwd) if should_inject else None)
+    emit(compose_message(slug) if should_inject else None)
 
 
 if __name__ == "__main__":

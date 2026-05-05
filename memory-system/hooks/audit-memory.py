@@ -30,7 +30,10 @@ AUDIT_STATE_FILE = STATE_DIR / "audit-state.json"
 HOOKS_DIR = Path(__file__).resolve().parent
 WORKER_SCRIPT = HOOKS_DIR / "memory_auditor" / "worker.py"
 
-AUDIT_THROTTLE_SECONDS = 60
+# v0.3.4: throttle removed. The dedup gate (`last_audited_turn_id`) already
+# prevents re-audit on identical content; the per-session timer was
+# delaying confirmations from landing in the audit window. Audits now fire
+# on every Stop hook event that has new content.
 AUDITOR_ENV_VAR = "MEMORY_SYSTEM_AUDITOR"
 
 
@@ -98,12 +101,6 @@ def main() -> None:
     if not Path(transcript_path).is_file():
         emit_continue()
     if is_disabled_for_project(cwd):
-        emit_continue()
-
-    state = load_state()
-    info = state.get("sessions", {}).get(session_id, {})
-    now = time.time()
-    if now - info.get("last_audit_epoch", 0) < AUDIT_THROTTLE_SECONDS:
         emit_continue()
 
     if not WORKER_SCRIPT.is_file():

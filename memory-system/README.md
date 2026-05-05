@@ -65,7 +65,7 @@ Two paths:
 
 The skill handles classification, lazy structure init, dedup checks, format enforcement, mode detection (single-file vs index for project memory), and index maintenance. New entries route to the right file automatically — to a topic file in index mode, or appended as a `## H2` to `MEMORY.md` in single-file mode. See `skills/memory-system/SKILL.md` for the full rule set.
 
-**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (60s throttle per session, transcript dedup), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews a semantic excerpt of the recent conversation (last 30 user/assistant messages from the session jsonl, with `tool_use` / `tool_result` blobs collapsed to one-liner summaries so most of the audit budget is spent on real conversation rather than tool noise), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
+**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (transcript exists, recursion guard, per-project disable), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews a semantic excerpt of the recent conversation (last 15 user/assistant messages from the session jsonl, with `tool_use` / `tool_result` blobs collapsed to one-liner summaries so most of the audit budget is spent on real conversation rather than tool noise), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). The dedup gate (`last_audited_turn_id`) prevents re-auditing the same content; per-turn audits let approvals land in the next audit window quickly. Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
 
 **Auditor safety (v0.3.3+):**
 
@@ -73,6 +73,18 @@ The skill handles classification, lazy structure init, dedup checks, format enfo
 - **Confirmation filter** — the auditor only crystallizes claims that were user-stated as fact, code-visible (in a tool result), or confirmed through repro. Hedged claims ("I think", "probably", "might") and unconfirmed speculation are skipped, regardless of the "bias toward writing" instruction.
 - **Routing self-check** — before any global memory write, the auditor performs a self-test: replace project/plugin/version names with `<other-project>` and ask "would a developer on a totally different project benefit from this?" If no, route to `~/.claude/project-memory/{slug}/` instead. Prevents project-specific roadmaps from leaking into `~/.claude/memory/domain/`.
 - **Output post-processing** — the worker logs only the auditor's first `wrote:` / `skip:` action line and discards any surrounding commentary. Defensive against output bleed where the auditor mimics structured chat content from the transcript.
+
+**Slug resolution (v0.3.4+):**
+
+Memory routes to `~/.claude/project-memory/{slug}/`. The slug is resolved via a 5-step lookup chain (first match wins):
+
+1. **Explicit override** — `.claude/memory-system.local.md` frontmatter `project_slug:` value
+2. **Plugin marker walk-up** — first directory above cwd containing `.claude-plugin/plugin.json` → use that dir's name (handles "user cd'd into a plugin folder")
+3. **Recent file activity** — if cwd is at or above a repo root containing plugin subfolders, check the about-to-fire tool call's `file_path` (PreToolUse) or recent transcript tool_use events (Stop hook) for matches inside a plugin subfolder → use that plugin's name (handles "user is at repo root but actively editing files in one plugin")
+4. **Repo root via .git/** — walk up from cwd to find the repo's `.git/` directory → use the repo's dir name
+5. **Fallback** — `cwd.name` (preserves pre-v0.3.4 behavior for layouts where no marker exists)
+
+For most repos (single-project, no plugin marker subfolders), step 4 fires and slug = repo name — no behavior change from v0.3.3. For multi-plugin marketplaces (like `claude-plugins` itself), steps 2-3 handle scoping automatically without requiring `cd` between plugin folders.
 
 The worker invokes `claude -p` with `--permission-mode bypassPermissions`, `--add-dir ~/.claude/memory`, `--add-dir ~/.claude/project-memory`, and `--no-session-persistence` (audit sessions don't clutter your `/resume` picker). It logs every fire to `~/.claude/cache/memory-system/audit.log` and tracks per-session state in `~/.claude/cache/memory-system/audit-state.json`. The auditor runs in non-interactive mode: it cannot use `AskUserQuestion` and is forbidden from modifying or removing existing memory entries — it only adds new ones. Existing entries that need updating still require an interactive session with the `memory-system` skill.
 
@@ -176,8 +188,7 @@ Memory will re-inject on the next tool call of every active session, and auto-wr
 
 - Check `~/.claude/cache/memory-system/audit.log` — every Stop hook fire (that gets past the gates) leaves a trace
 - Confirm `claude` is on PATH: `which claude` (it must be resolvable from a non-interactive subprocess — try `python -c "import shutil; print(shutil.which('claude'))"`)
-- Wait at least 60s between turns — there's a per-session throttle
-- Audit only fires once per turn — if the same turn hasn't progressed (no new messages), the worker bails on the dedup check
+- Audit fires on every Stop hook event (per-turn). If the same turn hasn't progressed (no new messages since `last_audited_turn_id`), the worker bails on the dedup check
 - Check for a project-local `.claude/memory-system.local.md` with `disabled: true`
 
 **Auto-write writing too much?**
@@ -191,7 +202,7 @@ Memory will re-inject on the next tool call of every active session, and auto-wr
 
 - Check `audit.log` for `skip:` entries with reasons
 - The default model is `haiku`. For sharper decisions, run `MEMORY_SYSTEM_AUDIT_MODEL=sonnet` in your shell before the audit fires
-- The audit window is the last 30 user/assistant messages from the session jsonl (tool blobs are summarized, not counted). If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X")
+- The audit window is the last 15 user/assistant messages from the session jsonl (tool blobs are summarized, not counted). If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X"). Smaller window vs v0.3.3 (was 30) is offset by per-turn audit firing — content cycles through multiple sequential audits as the window slides forward.
 
 ## License
 

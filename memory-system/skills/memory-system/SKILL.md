@@ -28,8 +28,9 @@ Choose the destination by scope:
 | Scope | Destination |
 |-------|-------------|
 | Project-specific (small project, no topic files yet) | `~/.claude/project-memory/{slug}/MEMORY.md` |
-| Project-specific (topic files exist) | `~/.claude/project-memory/{slug}/{topic}.md` |
+| Project-specific, flat-index mode (topic files exist) | `~/.claude/project-memory/{slug}/{topic}.md` |
 | Project topic with sub-topics accumulating | `~/.claude/project-memory/{slug}/{topic}/{sub-topic}.md` |
+| Project-specific, categorized-index mode (30+ topic files) | `~/.claude/project-memory/{slug}/{category}/{topic}.md` |
 | Cross-project tool/library (specific named tool) | `~/.claude/memory/tools/{name}.md` |
 | Single tool with multi-file knowledge accumulating | `~/.claude/memory/tools/{name}/{sub-topic}.md` |
 | Cross-tool knowledge area (problem space spanning multiple tools, not tied to one) | `~/.claude/memory/domain/{topic}.md` |
@@ -42,14 +43,20 @@ Choose the destination by scope:
 
 ## Project memory modes
 
-Project memory has two modes determined by the shape of `MEMORY.md`:
+Project memory evolves through three modes as it grows:
 
-- **Single-file mode** — `MEMORY.md` contains prose `## H2` sections directly. No sibling topic files exist (or they don't matter yet). New writes append a `## H2` section to `MEMORY.md`.
-- **Index mode** — `MEMORY.md` is an index table (`| File | Description | Last updated |`) plus a brief `## Quick context` intro. Topic files (`{topic}.md`) live alongside it. New writes go to the matching topic file (or create a new one); `MEMORY.md` only tracks the index.
+- **Single-file mode** — `MEMORY.md` contains prose `## H2` sections directly. No sibling topic files exist (or they don't matter yet). New writes append a `## H2` section to `MEMORY.md`. Default for fresh projects.
+- **Flat-index mode** — `MEMORY.md` is an index table (`| File | Description | Last updated |`) plus a brief `## Quick context` intro. Topic files (`{topic}.md`) live alongside it at the project root. New writes go to the matching topic file (or create a new one); `MEMORY.md` only tracks the index.
+- **Categorized-index mode** — same index table, but topic files live in category subfolders (`{category}/{topic}.md`) instead of flat at the root. For projects past ~30 topic files where flat layout is overwhelming. Categories are project-specific (e.g. `architecture/`, `ui/`, `data/`, `auth/`) — chosen by inspecting the topic content, not a fixed taxonomy.
 
-**Detect the mode** by reading `MEMORY.md` and looking for a header row matching `| File |` and `|---|`. If present → index mode. Otherwise → single-file mode.
+**Detect the mode:**
+- No `| File |` header in `MEMORY.md` → single-file mode.
+- Index table present, all rows reference flat paths (no `/`) → flat-index mode.
+- Index table present, some rows reference nested paths (e.g. `architecture/backend.md`) → categorized-index mode.
 
-Default for fresh projects: single-file mode. The file graduates to index mode via `reorganize-memory` when it crosses the ~150 line / 3+ sub-topics threshold.
+**Graduation:**
+- single-file → flat-index: triggered when `MEMORY.md` crosses ~150 lines or 3+ distinct topics. Run `reorganize-memory`.
+- flat-index → categorized-index: triggered when topic files exceed ~30 at root, or topics naturally cluster into 3+ distinct domains. Run `reorganize-memory`.
 
 ## Lazy Initialization
 

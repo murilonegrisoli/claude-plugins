@@ -27,6 +27,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Shared slug resolver lives at hooks/slug.py. worker.py is one level deeper
+# (hooks/memory_auditor/worker.py), so its parent dir isn't on sys.path by
+# default — add it explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from slug import resolve_slug  # noqa: E402
+
 HOME = Path.home()
 CLAUDE_HOME = HOME / ".claude"
 STATE_DIR = CLAUDE_HOME / "cache" / "memory-system"
@@ -34,7 +40,11 @@ AUDIT_STATE_FILE = STATE_DIR / "audit-state.json"
 AUDIT_LOG = STATE_DIR / "audit.log"
 
 DEFAULT_MODEL = "haiku"  # cheap+fast; override via MEMORY_SYSTEM_AUDIT_MODEL env var (e.g. "sonnet")
-MAX_AUDIT_MESSAGES = 30  # last N user/assistant jsonl events; tool_use / tool_result blobs are summarized to one-liners
+# v0.3.4: window halved (was 30). With the audit cooldown removed the auditor
+# fires on every Stop event, so each individual audit can see less context —
+# multi-turn discussions get re-evaluated across sequential audits as the
+# window slides forward. Net cost is balanced: 2x firing rate × 0.5x window.
+MAX_AUDIT_MESSAGES = 15  # last N user/assistant jsonl events; tool_use / tool_result blobs are summarized to one-liners
 MAX_TEXT_BLOCK_CHARS = 6000  # per-text-block soft cap to bound a single huge message (paste, large reply)
 MAX_TOOL_INPUT_VALUE_CHARS = 200  # truncate Bash command / Read path / etc. in tool_use summaries
 MAX_TOOL_RESULT_CHARS = 500  # truncate tool_result content; error signals (e.g. `WinError 206`) live in the first line
@@ -403,9 +413,10 @@ def main() -> None:
         log("`claude` CLI not found on PATH — auto-write disabled until claude is installed and on PATH")
         return
 
+    project_slug = resolve_slug(cwd, transcript_path=transcript_path)
     prompt = AUDITOR_PROMPT.format(
         cwd=cwd,
-        project_slug=cwd.name,
+        project_slug=project_slug,
         transcript_excerpt=excerpt,
     )
     cmd = build_command(model, claude_bin)
