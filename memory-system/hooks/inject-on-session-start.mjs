@@ -27,6 +27,7 @@ import {
   watchedMaxMtime,
 } from "./inject-memory.mjs";
 import { resolveSlug } from "./slug.mjs";
+import { ensureSlugSignal } from "./statusline-signal.mjs";
 
 /** @returns {Record<string, unknown>} */
 function readInput() {
@@ -96,6 +97,8 @@ function main() {
   state.sessions[sessionId] = buildSessionInfo(slug, nowEpoch, watchedMtime);
   pruneOldSessions(state, nowEpoch);
   saveState(state);
+
+  ensureSlugSignal(slug);
 
   emit(composeMessage(slug));
 }

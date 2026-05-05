@@ -24,6 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveSlug } from "../slug.mjs";
+import { formatStatuslineSignal, writeStatuslineSignal } from "../statusline-signal.mjs";
 
 const HOME = os.homedir();
 const CLAUDE_HOME = path.join(HOME, ".claude");
@@ -577,7 +578,11 @@ function main() {
   log(`claude exit=${result.status}`);
   if (result.stdout) {
     const action = extractActionLine(result.stdout);
-    if (action) log(`output: ${action}`);
+    if (action) {
+      log(`output: ${action}`);
+      const signal = formatStatuslineSignal(action, projectSlug);
+      if (signal) writeStatuslineSignal(signal);
+    }
   }
   if (result.stderr) {
     log(`stderr: ${String(result.stderr).trim().slice(0, 1000)}`);

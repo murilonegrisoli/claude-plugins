@@ -109,6 +109,14 @@ The worker invokes `claude -p` with `--permission-mode bypassPermissions`, `--ad
 
 Wall-clock per audit is roughly 20–60 seconds depending on transcript size and model. The worker is detached, so you're never blocked — just check `audit.log` if you're curious what landed.
 
+**Statusline signal (v0.4.5+):** memory-system writes a one-line status indicator to `~/.claude/cache/memory-system/statusline.txt`. Three writers contribute over the session lifecycle:
+
+- **SessionStart** — `🧠 [<slug>]` lands at session boot so the active project is visible from turn 1
+- **PreToolUse** — refreshes the slug-only signal each tool call (no-op if already fresh + matching slug, so audit `wrote` lines aren't clobbered)
+- **Auditor (Stop hook)** — after a successful audit, replaces the signal with `🧠 [<slug>] wrote <relative-path>`. Skip outcomes leave the file alone so the slug-only signal stays visible.
+
+Any plugin that reads the file-based signal convention (the bundled `statusline` plugin in this marketplace, for instance) will surface it automatically. Skip outcomes don't refresh the signal — the consumer's TTL drops the prior `wrote` line on its own rather than flickering between "wrote X" and "skip" on every turn.
+
 > **No API key needed.** The worker shells out to the user's existing `claude` binary, inheriting whatever auth Claude Code itself uses (subscription, API key, Bedrock, Vertex). Plug-and-play for any Claude Code user. The auditor uses `haiku` by default for cost; override via `MEMORY_SYSTEM_AUDIT_MODEL` env var (e.g. `sonnet` for sharper decisions at higher cost).
 
 > **Note on the project slug**: the slug is the basename of the current working directory. If two projects share the same folder name (e.g. two repos both called `frontend`), they currently share the same project memory file. If this matters for you, keep distinct folder names or scope project memory to one of them.

@@ -29,6 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveSlug } from "./slug.mjs";
+import { ensureSlugSignal } from "./statusline-signal.mjs";
 
 const HOME = os.homedir();
 const CLAUDE_HOME = path.join(HOME, ".claude");
@@ -354,6 +355,8 @@ function main() {
   state.sessions[sessionId] = info;
   pruneOldSessions(state, nowEpoch);
   saveState(state);
+
+  ensureSlugSignal(slug);
 
   emit(shouldInject ? composeMessage(slug) : null);
 }
