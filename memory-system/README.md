@@ -18,7 +18,7 @@ Native Claude Code memory (`CLAUDE.md`) is great but project-scoped. This plugin
 
 ## Prerequisites
 
-- Python 3.8+ on PATH (the PreToolUse hook is a tiny python script). Pre-installed on macOS and every Linux distro. On Windows, install from python.org or use the `py` launcher — note that the `python` command may resolve to a Microsoft Store stub if Python isn't actually installed.
+- Node 18+ on PATH. The hooks ship as `.mjs` (no build step, no dependencies — pure stdlib). Type-checked via `tsc --checkJs` in CI.
 
 ## Install
 
@@ -65,7 +65,7 @@ Two paths:
 
 The skill handles classification, lazy structure init, dedup checks, format enforcement, mode detection (single-file vs index for project memory), and index maintenance. New entries route to the right file automatically — to a topic file in index mode, or appended as a `## H2` to `MEMORY.md` in single-file mode. See `skills/memory-system/SKILL.md` for the full rule set.
 
-**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (transcript exists, recursion guard, per-project disable), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews a semantic excerpt of the recent conversation (last 15 user/assistant messages from the session jsonl, with `tool_use` / `tool_result` blobs collapsed to one-liner summaries so most of the audit budget is spent on real conversation rather than tool noise), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). The dedup gate (`last_audited_turn_id`) prevents re-auditing the same content; per-turn audits let approvals land in the next audit window quickly. Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
+**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.mjs`. After heuristic gates (transcript exists, recursion guard, per-project disable), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews a semantic excerpt of the recent conversation (last 15 user/assistant messages from the session jsonl, with `tool_use` / `tool_result` blobs collapsed to one-liner summaries so most of the audit budget is spent on real conversation rather than tool noise), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). The dedup gate (`last_audited_turn_id`) prevents re-auditing the same content; per-turn audits let approvals land in the next audit window quickly. Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
 
 **Auditor safety (v0.3.3+):**
 
@@ -166,8 +166,8 @@ Projects graduate from single-file → index via `/memory-system:reorganize-memo
 
 **Memory not injecting?**
 
-- Confirm `python --version` works on PATH
-- Run the hook manually: `echo '{"session_id":"test","cwd":"."}' | python <plugin-root>/hooks/inject-memory.py`
+- Confirm `node --version` reports 18+ on PATH
+- Run the hook manually: `echo '{"session_id":"test","cwd":"."}' | node <plugin-root>/hooks/inject-memory.mjs`
 - Check `~/.claude/cache/memory-system/state.json` — if your current `session_id` is in there, dedup is working as intended (already injected this session)
 - Check for a project-local `.claude/memory-system.local.md` with `disabled: true`
 
@@ -187,7 +187,7 @@ Memory will re-inject on the next tool call of every active session, and auto-wr
 **Auto-write isn't running?**
 
 - Check `~/.claude/cache/memory-system/audit.log` — every Stop hook fire (that gets past the gates) leaves a trace
-- Confirm `claude` is on PATH: `which claude` (it must be resolvable from a non-interactive subprocess — try `python -c "import shutil; print(shutil.which('claude'))"`)
+- Confirm `claude` is on PATH: `which claude` (it must be resolvable from a non-interactive subprocess — try `node -e "console.log(require('child_process').spawnSync(process.platform==='win32'?'where':'which',['claude']).stdout.toString())"`)
 - Audit fires on every Stop hook event (per-turn). If the same turn hasn't progressed (no new messages since `last_audited_turn_id`), the worker bails on the dedup check
 - Check for a project-local `.claude/memory-system.local.md` with `disabled: true`
 
