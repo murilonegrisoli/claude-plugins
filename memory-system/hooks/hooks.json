@@ -1,5 +1,5 @@
 {
-  "description": "memory-system hooks: inject project + global memory once per session via PreToolUse with session-based dedup, plus subagent-boundary re-injection",
+  "description": "memory-system hooks: PreToolUse injects project + global memory once per session (session-based dedup + subagent-boundary re-injection + mtime invalidation). Stop spawns a detached worker that asks Claude to audit the recent turn and persist anything memo-worthy via the memory-system skill.",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/inject-memory.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/audit-memory.py",
             "timeout": 5
           }
         ]

@@ -5,6 +5,7 @@ A structured cross-project memory layer for Claude Code. Adds:
 - **Global memory** at `~/.claude/memory/` — knowledge that follows you across every project (an index `MEMORY.md` plus topic files under `general.md` and `tools/`)
 - **Per-project memory** at `~/.claude/project-memory/{slug}/` — starts as a single `MEMORY.md` and graduates into an index + topic-file tree as the project's knowledge grows
 - **Auto-injection** of memory into every session (including subagent sessions) via a PreToolUse hook with session-based dedup + Agent-tool-boundary detection + mtime-based re-injection on mid-session writes
+- **Auto-write** of memo-worthy turns via a Stop hook: a detached worker spawns `claude -p` to audit the recent turn and persist gotchas, preferences, project state, and decisions automatically — using the user's existing Claude Code auth (no API key required)
 - **Lazy initialization** — structure is created on demand the first time memory is written, not at session start
 - **Plan-mode reorganization** — `/memory-system:reorganize-memory` audits the entire memory tree (global + project) and presents one consolidated approval covering dedupes, splits, merges, project-mode graduation, and index hygiene
 - **Lifecycle promotion** — when a memory file matures, `/memory-system:promote-memory` scaffolds a standalone plugin from it and replaces the source with a pointer
@@ -53,14 +54,22 @@ The hook also re-injects mid-session if any watched memory file has been modifie
 
 ## How memory gets written
 
-The plugin currently ships **read-side automation** (the PreToolUse hook above). Writes are claude-driven via the `memory-system` skill, which triggers when:
+Two paths:
+
+**1. In-session writes via the `memory-system` skill** (synchronous, claude-driven). Triggers when:
 
 - The user explicitly asks ("remember X", "save this", "write this down")
 - Claude recognizes non-obvious knowledge worth persisting (gotchas, workarounds, debugging insights, user preferences)
 
 The skill handles classification, lazy structure init, dedup checks, format enforcement, mode detection (single-file vs index for project memory), and index maintenance. New entries route to the right file automatically — to a topic file in index mode, or appended as a `## H2` to `MEMORY.md` in single-file mode. See `skills/memory-system/SKILL.md` for the full rule set.
 
-> **Auto-write hook (planned).** Prompt-based `Stop` hooks suffer from transcript context bleed — the sub-evaluation that decides whether to block can be corrupted by prior hook outputs visible in the conversation, leading to unreliable decisions. A planned future release will use a command-type `Stop` hook that calls the Anthropic API directly with a clean isolated context (similar to how claude-mem's worker pattern operates).
+**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (60s throttle per session, transcript dedup), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews the recent turn (last 200 transcript jsonl lines), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
+
+The worker invokes `claude -p` with `--permission-mode bypassPermissions`, `--add-dir ~/.claude/memory`, `--add-dir ~/.claude/project-memory`, and `--no-session-persistence` (audit sessions don't clutter your `/resume` picker). It logs every fire to `~/.claude/cache/memory-system/audit.log` and tracks per-session state in `~/.claude/cache/memory-system/audit-state.json`. The auditor runs in non-interactive mode: it cannot use `AskUserQuestion` and is forbidden from modifying or removing existing memory entries — it only adds new ones. Existing entries that need updating still require an interactive session with the `memory-system` skill.
+
+Wall-clock per audit is roughly 20–60 seconds depending on transcript size and model. The worker is detached, so you're never blocked — just check `audit.log` if you're curious what landed.
+
+> **No API key needed.** The worker shells out to the user's existing `claude` binary, inheriting whatever auth Claude Code itself uses (subscription, API key, Bedrock, Vertex). Plug-and-play for any Claude Code user. The auditor uses `haiku` by default for cost; override via `MEMORY_SYSTEM_AUDIT_MODEL` env var (e.g. `sonnet` for sharper decisions at higher cost).
 
 > **Note on the project slug**: the slug is the basename of the current working directory. If two projects share the same folder name (e.g. two repos both called `frontend`), they currently share the same project memory file. If this matters for you, keep distinct folder names or scope project memory to one of them.
 
@@ -84,9 +93,16 @@ disabled: true
 
 Currently supported fields:
 
-- `disabled` (default `false`) — skip memory injection in this project
+- `disabled` (default `false`) — skip both memory injection AND auto-write auditing in this project
 
 See `examples/memory-system.local.md` for the template.
+
+## Auto-write env vars
+
+| Env var | Effect |
+|---------|--------|
+| `MEMORY_SYSTEM_AUDIT_MODEL` | Override the auditor model. Default: `haiku`. Try `sonnet` for sharper decisions at higher cost. |
+| `MEMORY_SYSTEM_AUDITOR=1` | Internal: set by the worker on its `claude -p` subprocess. Any Stop hook seeing this var bails (loop prevention). Don't set manually unless you want to disable auto-write globally. |
 
 ## File layout
 
@@ -108,7 +124,9 @@ See `examples/memory-system.local.md` for the template.
         └── {sub-topic}.md
 
 ~/.claude/cache/memory-system/
-└── state.json          # session dedup state (auto-managed)
+├── state.json          # PreToolUse session dedup state (auto-managed)
+├── audit-state.json    # Stop hook audit dedup state (auto-managed)
+└── audit.log           # auto-write worker activity log (tail to debug)
 ```
 
 **Project memory has two modes:**
@@ -135,9 +153,31 @@ That's exactly the case this plugin solves — the PreToolUse hook fires in suba
 
 ```
 rm ~/.claude/cache/memory-system/state.json
+rm ~/.claude/cache/memory-system/audit-state.json
 ```
 
-Memory will re-inject on the next tool call of every active session.
+Memory will re-inject on the next tool call of every active session, and auto-write will treat all sessions as fresh.
+
+**Auto-write isn't running?**
+
+- Check `~/.claude/cache/memory-system/audit.log` — every Stop hook fire (that gets past the gates) leaves a trace
+- Confirm `claude` is on PATH: `which claude` (it must be resolvable from a non-interactive subprocess — try `python -c "import shutil; print(shutil.which('claude'))"`)
+- Wait at least 60s between turns — there's a per-session throttle
+- Audit only fires once per turn — if the same turn hasn't progressed (no new messages), the worker bails on the dedup check
+- Check for a project-local `.claude/memory-system.local.md` with `disabled: true`
+
+**Auto-write writing too much?**
+
+- Tail recent `audit.log` entries to see what's being written and where
+- Disable per-project via `.claude/memory-system.local.md` (`disabled: true`)
+- For a global kill switch, set `MEMORY_SYSTEM_AUDITOR=1` in your shell env — the Stop hook treats this as "we're recursing" and skips
+- If a specific entry shouldn't have landed, just delete it from the relevant `.md` file. The auditor won't re-add it because the dedup pass during the next audit will see it's already there (until you delete it again — at which point you may want a per-project disable)
+
+**Auto-write writing too little?**
+
+- Check `audit.log` for `skip:` entries with reasons
+- The default model is `haiku`. For sharper decisions, run `MEMORY_SYSTEM_AUDIT_MODEL=sonnet` in your shell before the audit fires
+- The transcript window is 200 lines from the tail of the session jsonl. If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X")
 
 ## License
 
