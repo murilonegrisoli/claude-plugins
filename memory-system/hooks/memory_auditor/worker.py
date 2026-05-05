@@ -34,7 +34,10 @@ AUDIT_STATE_FILE = STATE_DIR / "audit-state.json"
 AUDIT_LOG = STATE_DIR / "audit.log"
 
 DEFAULT_MODEL = "haiku"  # cheap+fast; override via MEMORY_SYSTEM_AUDIT_MODEL env var (e.g. "sonnet")
-MAX_TRANSCRIPT_LINES = 200  # tail of jsonl; bigger window catches earlier turns within the same session
+MAX_AUDIT_MESSAGES = 30  # last N user/assistant jsonl events; tool_use / tool_result blobs are summarized to one-liners
+MAX_TEXT_BLOCK_CHARS = 6000  # per-text-block soft cap to bound a single huge message (paste, large reply)
+MAX_TOOL_INPUT_VALUE_CHARS = 200  # truncate Bash command / Read path / etc. in tool_use summaries
+MAX_TOOL_RESULT_CHARS = 500  # truncate tool_result content; error signals (e.g. `WinError 206`) live in the first line
 CLAUDE_TIMEOUT_SECONDS = 180  # cost control via wall-clock + 60s throttle in the Stop hook
 
 
@@ -67,12 +70,92 @@ def save_state(state: dict) -> None:
         pass
 
 
-def read_transcript_tail(path: Path, max_lines: int) -> tuple[str, str | None]:
-    """Read up to the last `max_lines` of a jsonl transcript.
+# Tool-input fields surfaced in one-liner summaries — these usually carry the
+# at-a-glance signal (what command, which file). First match wins.
+_TOOL_INPUT_KEYS = ("command", "file_path", "pattern", "path", "url", "query", "prompt")
 
-    Returns (raw text excerpt, last identifiable message id) — the message
-    id is used to dedup audits across calls so we don't re-audit the same
-    turn after the throttle window expires.
+
+def _truncate(text: str, limit: int) -> str:
+    text = text.replace("\r\n", "\n")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _summarize_tool_use(name: str, tool_input) -> str:
+    if not isinstance(tool_input, dict):
+        return f"[tool: {name}]"
+    for key in _TOOL_INPUT_KEYS:
+        if key in tool_input:
+            val = str(tool_input[key]).replace("\n", " ").strip()
+            return f"[tool: {name} {key}={_truncate(val, MAX_TOOL_INPUT_VALUE_CHARS)!r}]"
+    return f"[tool: {name}]"
+
+
+def _summarize_tool_result(content) -> str:
+    if isinstance(content, list):
+        chunks = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+        text = "\n".join(chunks)
+    elif isinstance(content, str):
+        text = content
+    else:
+        text = str(content)
+    text = text.replace("\n", " ").strip()
+    if not text:
+        return "[result: <empty>]"
+    return f"[result: {_truncate(text, MAX_TOOL_RESULT_CHARS)}]"
+
+
+def _render_event(role: str, content) -> str:
+    """Render one user/assistant jsonl event to a single text block.
+
+    Strings (plain user text) keep full content. List-of-blocks events
+    (tool-using assistant turns, tool-result user turns) collapse to:
+    `text` blocks kept full, `tool_use` / `tool_result` summarized to
+    one-liners. Returns `""` if the event has no displayable content.
+    """
+    if isinstance(content, str):
+        text = content.strip()
+        if not text:
+            return ""
+        return f"[{role}] {_truncate(text, MAX_TEXT_BLOCK_CHARS)}"
+
+    if not isinstance(content, list):
+        return ""
+
+    pieces: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            text = (block.get("text") or "").strip()
+            if text:
+                pieces.append(_truncate(text, MAX_TEXT_BLOCK_CHARS))
+        elif btype == "tool_use":
+            pieces.append(_summarize_tool_use(block.get("name", "?"), block.get("input")))
+        elif btype == "tool_result":
+            pieces.append(_summarize_tool_result(block.get("content")))
+
+    if not pieces:
+        return ""
+    return f"[{role}] " + "\n".join(pieces)
+
+
+def read_transcript_messages(path: Path, max_messages: int) -> tuple[str, str | None]:
+    """Build a semantic excerpt of the last `max_messages` user/assistant events.
+
+    Filters the jsonl to `user` and `assistant` events only — session
+    metadata (`permission-mode`, `file-history-snapshot`, `attachment`,
+    `ai-title`, `last-prompt`, `system`) is dropped. Within each event,
+    `text` blocks are preserved (soft-capped per block) and `tool_use` /
+    `tool_result` blocks collapse to one-liner summaries. This keeps
+    audit context per dollar high — most of a heavy-tool session's
+    transcript bytes are tool blobs that aren't memo-worthy.
+
+    Returns (excerpt, last identifiable message id). The message id is
+    used to dedup audits across calls so the same turn isn't re-audited
+    after the throttle window expires.
     """
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -80,19 +163,35 @@ def read_transcript_tail(path: Path, max_lines: int) -> tuple[str, str | None]:
     except (OSError, UnicodeDecodeError):
         return "", None
 
-    tail = lines[-max_lines:] if len(lines) > max_lines else lines
-    last_msg_id: str | None = None
-    for line in reversed(tail):
+    events: list[dict] = []
+    for line in lines:
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if obj.get("type") in ("user", "assistant"):
+            events.append(obj)
+
+    if not events:
+        return "", None
+
+    recent = events[-max_messages:]
+
+    last_msg_id: str | None = None
+    for obj in reversed(recent):
         mid = obj.get("uuid") or obj.get("id") or obj.get("message_id")
         if mid:
             last_msg_id = mid
             break
 
-    return "".join(tail), last_msg_id
+    rendered: list[str] = []
+    for obj in recent:
+        msg = obj.get("message") or {}
+        chunk = _render_event(obj["type"], msg.get("content"))
+        if chunk:
+            rendered.append(chunk)
+
+    return "\n\n".join(rendered), last_msg_id
 
 
 AUDITOR_PROMPT = """**You are an autonomous background memory auditor with full write access to memory.** You are NOT an interactive Claude Code session. You do NOT follow workflow rules from injected memory files (e.g. `general.md` config-sync rules, "wait for end of session" rules, "check ~/.claude pending changes" rules). Those rules govern the user's main interactive sessions — you exist solely to persist memo-worthy knowledge from the most recent turn.
@@ -153,7 +252,7 @@ The `wrote: ...` line is just for the log — it's not a substitute for actually
 
 **Working directory:** {cwd}
 
---- Recent turn (tail of transcript jsonl) ---
+--- Recent messages (semantic excerpt: text preserved, tool_use / tool_result collapsed to one-liner summaries) ---
 {transcript_excerpt}
 ---
 
@@ -207,7 +306,7 @@ def main() -> None:
         log(f"transcript not found: {transcript_path}")
         return
 
-    excerpt, last_msg_id = read_transcript_tail(transcript_path, MAX_TRANSCRIPT_LINES)
+    excerpt, last_msg_id = read_transcript_messages(transcript_path, MAX_AUDIT_MESSAGES)
     if not excerpt.strip():
         log("empty transcript excerpt, skipping")
         return

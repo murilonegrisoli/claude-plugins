@@ -63,7 +63,7 @@ Two paths:
 
 The skill handles classification, lazy structure init, dedup checks, format enforcement, mode detection (single-file vs index for project memory), and index maintenance. New entries route to the right file automatically — to a topic file in index mode, or appended as a `## H2` to `MEMORY.md` in single-file mode. See `skills/memory-system/SKILL.md` for the full rule set.
 
-**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (60s throttle per session, transcript dedup), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews the recent turn (last 200 transcript jsonl lines), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
+**2. Auto-write via the Stop hook** (asynchronous, autonomous). At the end of every turn, a Stop hook fires `audit-memory.py`. After heuristic gates (60s throttle per session, transcript dedup), it spawns a detached worker that runs `claude -p` with an isolated audit prompt. The auditor reviews a semantic excerpt of the recent conversation (last 30 user/assistant messages from the session jsonl, with `tool_use` / `tool_result` blobs collapsed to one-liner summaries so most of the audit budget is spent on real conversation rather than tool noise), decides if anything is memo-worthy across four categories (gotchas, user preferences/corrections, project state changes, non-obvious choices), and writes via Read/Write/Edit (with explicit dedup-then-write ordering enforced in the prompt). Loop prevention via the `MEMORY_SYSTEM_AUDITOR=1` env var — any nested Stop hook bails immediately.
 
 The worker invokes `claude -p` with `--permission-mode bypassPermissions`, `--add-dir ~/.claude/memory`, `--add-dir ~/.claude/project-memory`, and `--no-session-persistence` (audit sessions don't clutter your `/resume` picker). It logs every fire to `~/.claude/cache/memory-system/audit.log` and tracks per-session state in `~/.claude/cache/memory-system/audit-state.json`. The auditor runs in non-interactive mode: it cannot use `AskUserQuestion` and is forbidden from modifying or removing existing memory entries — it only adds new ones. Existing entries that need updating still require an interactive session with the `memory-system` skill.
 
@@ -177,7 +177,7 @@ Memory will re-inject on the next tool call of every active session, and auto-wr
 
 - Check `audit.log` for `skip:` entries with reasons
 - The default model is `haiku`. For sharper decisions, run `MEMORY_SYSTEM_AUDIT_MODEL=sonnet` in your shell before the audit fires
-- The transcript window is 200 lines from the tail of the session jsonl. If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X")
+- The audit window is the last 30 user/assistant messages from the session jsonl (tool blobs are summarized, not counted). If a memo-worthy item was earlier in the session, it may be outside the window — surface it explicitly via the `memory-system` skill ("remember X")
 
 ## License
 

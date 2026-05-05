@@ -1,6 +1,6 @@
 {
   "name": "memory-system",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Structured cross-project memory layer for Claude Code. Auto-injects project + global memory into every session (including subagents), with lazy init, plan-mode reorganization, and lifecycle promotion of mature memory into plugins.",
   "author": {
     "name": "Murilo Negrisoli",
