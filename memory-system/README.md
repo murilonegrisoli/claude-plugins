@@ -4,7 +4,7 @@ A structured cross-project memory layer for Claude Code. Adds:
 
 - **Global memory** at `~/.claude/memory/` — knowledge that follows you across every project (an index `MEMORY.md` plus topic files: `general.md` for cross-cutting conventions, `tools/{name}.md` for tool/library notes, `domain/{topic}.md` for cross-tool knowledge areas)
 - **Per-project memory** at `~/.claude/project-memory/{slug}/` — starts as a single `MEMORY.md` and graduates into an index + topic-file tree as the project's knowledge grows
-- **Auto-injection** of memory into every session (including subagent sessions) via a PreToolUse hook with session-based dedup + Agent-tool-boundary detection + mtime-based re-injection on mid-session writes
+- **Auto-injection** of memory into every session (including subagent sessions) on session boot (SessionStart) and at relevant boundaries mid-session (PreToolUse): session-based dedup + Agent-tool-boundary detection + mtime-based re-injection on mid-session writes
 - **Auto-write** of memo-worthy turns via a Stop hook: a detached worker spawns `claude -p` to audit the recent turn and persist gotchas, preferences, project state, and decisions automatically — using the user's existing Claude Code auth (no API key required)
 - **Lazy initialization** — structure is created on demand the first time memory is written, not at session start
 - **Plan-mode reorganization** — `/memory-system:reorganize-memory` audits the entire memory tree (global + project) and presents one consolidated approval covering dedupes, splits, merges, project-mode graduation, and index hygiene
@@ -38,7 +38,7 @@ For local development, point the marketplace at a local path instead:
 
 ## What gets injected
 
-On the first tool call of every session (including subagents):
+At session start (turn 1, top-level sessions) and on the first tool call of every subagent session:
 
 ```
 === HOW TO USE THE MEMORY BELOW ===
@@ -56,6 +56,8 @@ On the first tool call of every session (including subagents):
 **The directive (v0.4.2+)** addresses a specific failure mode: without it, models tend to treat the one-line description in each index row as the actual knowledge and never load the topic files. The directive explicitly reframes the index as a list of pointers, tells the model to Read on relevance, and gives a tiebreaker rule ("if unsure, Read — reading is cheap, missing a gotcha is expensive").
 
 Subsequent tool calls in the same session stay silent — state is tracked at `~/.claude/cache/memory-system/state.json`. Sessions older than 7 days are pruned automatically.
+
+**Session-start delivery (v0.4.4+):** SessionStart fires once per top-level session and emits the same payload immediately, so turn 1 has the index without needing a tool call to wake the PreToolUse hook. SessionStart writes the same `state.json` PreToolUse reads (committing `last_inject_epoch` directly), so the next PreToolUse sees existing session info and stays silent — zero double-inject cost. SessionStart does not fire for subagents (a documented Claude Code quirk), so subagent injection still flows through PreToolUse's Agent-boundary detection.
 
 The hook also re-injects mid-session if any watched memory file has been modified since the last injection. The watch covers the entire global memory tree (`~/.claude/memory/**/*.md`) and the entire active project's memory tree (`~/.claude/project-memory/{slug}/**/*.md`). This covers concurrent sessions writing to memory, the user editing a memory file by hand, and Claude itself writing memory mid-flow — the next tool call sees the fresh content rather than the stale snapshot from session start.
 

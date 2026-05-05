@@ -1,6 +1,18 @@
 {
-  "description": "memory-system hooks: PreToolUse emits memory injection (project + global) for sessions that need it; PostToolUse confirms delivery so rejected tool calls don't burn the inject. Stop spawns a detached worker that asks Claude to audit the recent turn and persist anything memo-worthy via the memory-system skill.",
+  "description": "memory-system hooks: SessionStart injects memory at session boot so turn 1 has the index without needing a tool call. PreToolUse re-injects at session-relevant boundaries (subagent return, slug change, mtime bump) and dedups via shared state. PostToolUse confirms delivery so rejected tool calls don't burn the inject. Stop spawns a detached worker that asks Claude to audit the recent turn and persist anything memo-worthy via the memory-system skill.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/inject-on-session-start.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "*",
