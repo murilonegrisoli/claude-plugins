@@ -1,5 +1,7 @@
 # memory-system
 
+> ⚠️ **Experimental — not production-ready.** The background auditor (Stop-hook auto-write) frequently persists unconfirmed claims as fact, mis-routes between global and project memory, or otherwise produces noise. The confirmation filter, routing self-check, and tool allowlist help but don't eliminate it. Review what lands in `~/.claude/memory/` and `~/.claude/project-memory/<slug>/` after sessions. Manual writes via the `memory-system` skill are reliable; the auto-write path is what to watch. Use at your own risk and expect to do cleanup.
+
 A structured cross-project memory layer for Claude Code. Adds:
 
 - **Global memory** at `~/.claude/memory/` — knowledge that follows you across every project (an index `MEMORY.md` plus topic files: `general.md` for cross-cutting conventions, `tools/{name}.md` for tool/library notes, `domain/{topic}.md` for cross-tool knowledge areas)

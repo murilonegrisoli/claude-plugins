@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "memory-system",
-      "description": "Structured cross-project memory layer for Claude Code. Auto-injects project + global memory into every session (including subagents), with lazy init, plan-mode reorganization, and lifecycle promotion of mature memory into plugins.",
+      "description": "[experimental, not production-ready] Structured cross-project memory layer for Claude Code. Auto-injects project + global memory into every session (including subagents), with lazy init, plan-mode reorganization, and lifecycle promotion of mature memory into plugins. Background auditor produces noise — review what lands in ~/.claude/memory/ after sessions.",
       "author": {
         "name": "Murilo Negrisoli",
         "email": "murilo@negrisoli.net"

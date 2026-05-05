@@ -16,7 +16,9 @@ Then list available plugins:
 
 ## Plugins
 
-### `memory-system`
+### `memory-system` ⚠️ experimental
+
+> Not production-ready. The background auditor produces noise — review what lands in `~/.claude/memory/` after sessions. Manual writes via the `memory-system` skill are reliable; the auto-write Stop hook is what to watch.
 
 Structured cross-project memory layer for Claude Code. Auto-injects project + global memory at session start (and on relevant boundaries mid-session), including subagents. Auto-writes memo-worthy turns via a detached `claude -p` audit worker at the end of each turn. Global memory organizes knowledge into `general.md` (cross-cutting conventions), `tools/{name}.md` (per-tool notes), and `domain/{topic}.md` (cross-tool problem areas). Per-project memory lives at `~/.claude/project-memory/{slug}/` and grows from a single `MEMORY.md` into an index + topic-file tree as the project accumulates knowledge. Includes lazy init, plan-mode reorganization, and lifecycle promotion of mature memory into standalone plugins.
 
