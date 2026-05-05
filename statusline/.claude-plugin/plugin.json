@@ -1,0 +1,11 @@
+{
+  "name": "statusline",
+  "version": "0.1.0",
+  "description": "Claude Code statusline renderer with cross-plugin signal aggregation. Ships a base statusline (context window + 5h/7d rate-limit progress bars) and reads signals from `~/.claude/cache/*/statusline.txt` so other plugins can contribute status segments without coupling. Includes interactive /statusline:install and /statusline:uninstall commands that handle settings.json with backup/restore.",
+  "author": {
+    "name": "Murilo Negrisoli",
+    "email": "murilo@negrisoli.net"
+  },
+  "license": "MIT",
+  "keywords": ["statusline", "ui", "monitoring", "rate-limit"]
+}

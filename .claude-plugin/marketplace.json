@@ -15,6 +15,16 @@
       },
       "category": "productivity",
       "source": "./memory-system"
+    },
+    {
+      "name": "statusline",
+      "description": "Claude Code statusline renderer with cross-plugin signal aggregation. Ships a base statusline (context window + 5h/7d rate-limit progress bars) and reads signals from `~/.claude/cache/*/statusline.txt` so other plugins can contribute status segments without coupling. Includes interactive /statusline:install and /statusline:uninstall commands.",
+      "author": {
+        "name": "Murilo Negrisoli",
+        "email": "murilo@negrisoli.net"
+      },
+      "category": "ui",
+      "source": "./statusline"
     }
   ]
 }
